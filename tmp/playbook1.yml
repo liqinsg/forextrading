@@ -1,0 +1,33 @@
+---
+- name: 美股 DCA 策略盘中监控
+  hosts: localhost
+  connection: local
+  vars:
+    # 定义你的交易纪律阈值
+    target_drawdown: 1.0
+    venv_path: "/home/qili/projects/gemini_api/venv" # 你的虚拟环境路径
+
+  tasks:
+    - name: 执行 Python 监控脚本（在虚拟环境中）
+      command: "{{ venv_path }}/bin/python /home/qili/projects/gemini_api/yhfin.py"
+      register: script_result
+
+    - name: 解析脚本输出的 JSON 数据
+      set_fact:
+        market: "{{ script_result.stdout | from_json }}"
+
+    - name: 打印当前市场状态
+      debug:
+        msg: "当前价: {{ market.current_price }}, MA5: {{ market.ma5 }}, 回撤: {{ market.drawdown }}%"
+
+    - name: 【触发告警】回撤达到阈值或价格逼近MA5
+      # 触发条件：回撤大于等于1% 或者 当前价小于等于MA5
+      uri:
+        url: "https://api.telegram.org/bot8422516990:AAHTzdNQvfUAsapjoI2jWseN8oTKIHyLBhM/sendMessage"
+        method: POST
+        body_format: json
+        body:
+          chat_id: "-5036046879"
+          text: "🚨【DCA 信号触发】\nSPY 当前回撤已达 {{ market.drawdown }}%（触发线: {{ target_drawdown }}%）。\n当前价: {{ market.current_price }} / MA5: {{ market.ma5 }}。\n资金利用率提示：满足手动加仓条件，请注意分批建仓！"
+      when: 
+        - (market.drawdown | float) >= (target_drawdown | float) or (market.current_price | float) <= (market.ma5 | float)

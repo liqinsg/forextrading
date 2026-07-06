@@ -1,0 +1,30 @@
+pip install requests
+pip install python-dotenv
+pip install influxdb
+pip install -r requirements.txt 
+pip install pptx
+pip install --upgrade pip
+pip install pptx
+pip install python-pptx
+pip install -U google-genai
+pip install -U google-genaipip install "packaging
+pip install "packaging<25"pip install "packaging<
+pip install "packaging<25"
+pip install -U mlflow-skinny
+pip install --upgrade mlflow mlflow-skinny
+pip install -U google-genai
+pip install -U google-genai
+pip install "pydantic-core==2.46.4"
+pip install --upgrade mlflow mlflow-skinny pydant
+pip install "pydantic-core==2.46.4"
+pip install oanda-river
+pip install oanda-v20
+pip install oandav20
+pip install oandapyV20
+pip install ipenai
+pip install openai
+pip install pydantic
+pip install oandapyV20
+pip install requests
+pip install six
+pip install openai

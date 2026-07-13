@@ -16,8 +16,10 @@ from oandapyV20 import API
 import oandapyV20.endpoints.positions as positions
 import oandapyV20.endpoints.orders as orders
 
-
-oanda_env = os.getenv("OANDA_ENV", "practice")
+from config import (
+    OANDA_ENV, OANDA_API_TOKEN, OANDA_ACCOUNT_ID
+)
+oanda_env = OANDA_ENV
 oanda_client = API(
     access_token=os.getenv("OANDA_API_TOKEN"),
     environment=oanda_env,

@@ -2,8 +2,10 @@ from google import genai
 from pydantic import BaseModel
 # Import the schema we defined above
 # from utils.schemas import TradeSignal 
+from utils import TradeSignal
 
 client = genai.Client()
+
 
 def analyze_gbpjpy_market(technical_data: str, news_sentiment: str) -> TradeSignal:
     prompt = f"""

@@ -12,7 +12,7 @@ import importlib
 from datetime import datetime, timezone, timedelta
 from oandapyV20 import API
 from config import OANDA_API_TOKEN, OANDA_ENV, OANDA_ACCOUNT_ID
-from main import format_price_for_instrument
+from trading_core format_price_for_instrument
 
 try:
     orders_module = importlib.import_module("oandapyV20.endpoints.orders")

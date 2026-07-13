@@ -4,7 +4,7 @@ Run this AFTER confirming your .env points at your demo account/token.
 This will place a REAL (demo) market order if it succeeds.
 """
 from utils.schemas import TradeSignal
-from main import execute_market_trade
+from trading_core execute_market_trade
 
 # Adjust stop_loss / take_profit to sane levels for whatever pair you test with.
 # These are placeholder price levels — check the current market price first

@@ -1,4 +1,4 @@
-from find_support_resistence import get_support_resistance
+from utils import get_support_resistance
 from utils.schemas import TradeSignal
 
 STRATEGY_LABELS = {

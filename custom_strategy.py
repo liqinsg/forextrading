@@ -1,6 +1,7 @@
 # custom_strategy.py
 import os
 from abc import ABC, abstractmethod
+from ml_confirmation import ml_filter, ENABLE_ML_WEIGHTED_DOMINANCE
 
 from utils import get_support_resistance, oanda_client
 import config as _config
@@ -118,6 +119,10 @@ class JPYTrendStrategy(Strategy):
                 continue
             if direction == "SELL" and strength_score > 0:
                 print("    → Mixed Signal: Techs SELL but Strength favors Base. Skipping.")
+                continue
+            should_avoid_ml, ml_reason = ml_filter.should_avoid_pair(pair, direction)
+            if should_avoid_ml:
+                print(f"    → Skip: ML confidence - {ml_reason}")
                 continue
 
             prices = get_live_prices(pair)
@@ -238,7 +243,15 @@ class JPYTrendStrategy(Strategy):
         def _dominance_weight(s: dict) -> float:
             raw = abs(s["strength_score"])
             if not ENABLE_VOLATILITY_NORMALIZED_DOMINANCE:
-                return raw
+                pass
+            else:
+                atr = get_dominance_normalizer(s["pair"])
+                raw = raw / atr if (atr and atr > 0) else raw
+            if ENABLE_ML_WEIGHTED_DOMINANCE:
+                conf = ml_filter.get_confidence(s["pair"], s["action"])
+                raw *= conf
+            return raw
+
             atr = get_dominance_normalizer(s["pair"])
             return raw / atr if (atr and atr > 0) else raw
 

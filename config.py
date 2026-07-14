@@ -271,3 +271,16 @@ OANDA_ACCOUNT_ID = os.getenv("OANDA_ACCOUNT_ID")
 # Control where price/candle data comes from
 # ==========================================
 DATA_SOURCE = "OANDA_WITH_YAHOO_FALLBACK"
+ENABLE_ML_CONFIRMATION = True
+
+
+# --- ML Confirmation Layer (custom_strategy.py / ml_confirmation.py) ---
+ENABLE_ML_CONFIRMATION = True        # gate signals out on low ML confidence
+ENABLE_ML_WEIGHTED_DOMINANCE = False  # scale dominance weight by ML confidence
+ML_MIN_CONFIDENCE = 0.55
+ML_RETRAIN_HOURS = 24
+ML_TRAIN_GRANULARITY = "H1"
+ML_TRAIN_CANDLE_COUNT = 3000
+ML_HOLDOUT_FRACTION = 0.2
+ML_LABEL_HORIZON = 3
+ML_MIN_HOLDOUT_F1 = 0.0

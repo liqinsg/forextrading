@@ -230,4 +230,6 @@ TRADE_TOP_PAIRS = 1  # Always trade only single strongest/weakest pair per cycle
 ENABLE_ML_CONFIRMATION = True       # Enable merged validation
 ML_MIN_CONFIDENCE = 0.50            # Lower = more trades, higher = stricter
 ML_MODEL_PATH = "ml_model.pkl"       # Save/load trained model here
-ML_FE = FeatureEngineer(timeperiod=14)  # Match your feature setup
+# ML_FE = FeatureEngineer(timeperiod=14)  # Match your feature setup
+ML_TRAIN_PAIR = "USDJPY=X"            # Pair used to train the base model
+DEMO_MODE = True  # If True, no real trades are executed; just logs signals

@@ -1,5 +1,8 @@
+from utils.strategy_helpers import get_candles, _atr_from_candles, _ema
+from typing import Tuple
 import sys
 from pathlib import Path
+import config as _config
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 """
@@ -8,16 +11,14 @@ Range / Sideways Market Detector
 Standalone module to identify flat/sideways pairs.
 Run directly: `python utils/range_detector.py` or `python -m utils.range_detector`
 """
-from typing import Tuple
-from utils.strategy_helpers import get_candles, _atr_from_candles, _ema
 
 
 def is_sideways(
     instrument: str,
-    lookback_days: int = 5,
-    max_range_pct: float = 1.2,       # <1.2% total move in 5 days = sideways
-    min_volatility_ratio: float = 0.8, # <0.8x average ATR = dead range
-    ma_band_threshold: float = 0.5     # Price within 0.5% of MA20 = flat
+    lookback_days: int = _config.RANGE_DETECT_LOOKBACK_DAYS,
+    max_range_pct: float = _config.RANGE_DETECT_MAX_RANGE_PCT,
+    min_volatility_ratio: float = _config.RANGE_DETECT_MIN_VOL_RATIO,
+    ma_band_threshold: float = 0.5
 ) -> Tuple[bool, str, dict]:
     """
     Check if pair is in sideways/range-bound condition.

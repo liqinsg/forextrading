@@ -136,13 +136,16 @@ def execute_market_trade(signal, units_override=None):
         if "orderFillTransaction" in resp:
             print(f"[EXEC] Filled {signal.action} {signal.pair_to_trade}")
             attach_sl_tp_to_open_trade(signal)
+            return True
     except Exception as e:
         print(f"[EXEC ERROR] {e}")
-
+    return False
 
 # --------------------------
 # Gemini Enhancements
 # --------------------------
+
+
 def get_latest_news_sentiment() -> str:
     if not USE_GEMINI_AI or not gemini_client:
         return "Gemini disabled"
@@ -279,3 +282,58 @@ def get_latest_price(instrument: str) -> float | None:
     except Exception as e:
         print(f"[OANDA] Error fetching price: {str(e)}")
         return None
+
+def close_position(instrument: str) -> bool:
+    positions_mod = importlib.import_module(
+        "oandapyV20.endpoints.positions"
+    )
+
+    try:
+        pos_req = positions_mod.OpenPositions(
+            accountID=OANDA_ACCOUNT_ID
+        )
+        oanda_client.request(pos_req)
+
+        position = next(
+            (
+                p
+                for p in pos_req.response.get("positions", [])
+                if p.get("instrument") == instrument
+            ),
+            None,
+        )
+
+        if not position:
+            print(f"[CLOSE] No open position for {instrument}")
+            return False
+
+        long_units = int(
+            float(position.get("long", {}).get("units", 0))
+        )
+
+        short_units = int(
+            float(position.get("short", {}).get("units", 0))
+        )
+
+        payload = {}
+
+        if long_units > 0:
+            payload["longUnits"] = str(long_units)
+
+        if short_units < 0:
+            payload["shortUnits"] = str(abs(short_units))
+
+        req = positions_mod.PositionClose(
+            accountID=OANDA_ACCOUNT_ID,
+            instrument=instrument,
+            data=payload,
+        )
+
+        oanda_client.request(req)
+
+        print(f"[CLOSE] Closed {instrument}")
+        return True
+
+    except Exception as e:
+        print(f"[CLOSE ERROR] {e}")
+        return False

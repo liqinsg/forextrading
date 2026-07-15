@@ -3,7 +3,7 @@ import importlib
 from oandapyV20 import API
 import oandapyV20.endpoints.instruments as instruments
 from utils import oanda_client
-
+from typing import Optional
 from config import (
     OANDA_ENV, OANDA_API_TOKEN, OANDA_ACCOUNT_ID,
     TRADE_PAIRS, SIGNAL_TIMEFRAMES, SL_BUFFER_PIPS, SPREAD_PIPS
@@ -158,24 +158,6 @@ def get_ma5_position(instrument: str, granularity: str) -> str | None:
     ma5          = sum(closes[-5:]) / 5
     latest_close = closes[-1]
     return "above" if latest_close > ma5 else "below"
-
-
-def check_ma5_alignment(instrument: str) -> str | None:
-    positions = {}
-    for tf in SIGNAL_TIMEFRAMES:
-        pos = get_ma5_position(instrument, tf)
-        if pos is None:
-            print(f"    {tf}: DATA ERROR")
-            return None
-        positions[tf] = pos
-        print(f"    {tf}: {pos.upper()} MA5")
-
-    distinct_positions = set(positions.values())
-    if len(distinct_positions) == 1:
-        current_alignment = distinct_positions.pop()
-        return "BUY" if current_alignment == "above" else "SELL"
-    
-    return None
 
 
 def get_live_prices(instrument: str) -> dict | None:

@@ -1,10 +1,9 @@
 """
-Scheduled Runner — Simple JPY Trend Strategy
-=============================================
-Checks USD/JPY, EUR/JPY, GBP/JPY every 15 minutes.
-Entry when H4 + H1 + M30 + M15 are ALL above MA5.
-SL = today's low − 23 pips. TP = entry + 100 pips.
-No AI/LLM calls. Pure rules.
+Scheduled Runner — JPY Strength Strategy
+==========================================
+Scans JPY crosses every 15 minutes.
+Requires ≥2 valid pairs → trades only the top strongest/weakest vs JPY.
+Uses custom_strategy rules + OANDA execution.
 """
 import time
 import schedule
@@ -14,82 +13,92 @@ from config import (
     CHECK_INTERVAL_MINUTES, RISK_LEVEL, RISK_PROFILE
 )
 from custom_strategy import analyze_custom_strategy, get_last_signal
-from utils import execute_market_trade, get_open_position  # , run_trading_cycle, get_candles, get_latest_price
+from utils import execute_market_trade, get_open_position
 from utils.schemas import TradeSignal
 from retry import with_retry
 
 
 def run_cycle():
     profile = RISK_PROFILE[RISK_LEVEL]
-    print(
-        f"\n[{datetime.now().isoformat()}] === JPY Trend Scan | Risk: {RISK_LEVEL} ===")
+    print(f"\n[{datetime.now().isoformat()}] === JPY Strength Scan | Risk Level: {RISK_LEVEL} ===")
 
     try:
-        # 1. Scan all three JPY pairs for MA5 alignment
-        with_retry(analyze_custom_strategy, max_attempts=3, delay=5, label="strategy_scan")
+        # 1. Run full strategy scan (retry up to 3 times)
+        scan_result = with_retry(
+            analyze_custom_strategy,
+            max_attempts=3,
+            delay=5,
+            label="strategy_scan"
+        )
 
         signal_data = get_last_signal()
 
         if signal_data is None:
-            print("[CYCLE] No MA5 alignment across any JPY pair. HOLD.")
+            print("[CYCLE] No qualifying signals (need ≥2 valid pairs). HOLD.")
             return
 
         pair = signal_data["pair"]
         action = signal_data["action"]
 
-        # 2. Guard: skip if already in this pair
-        # Inside scheduled_runner.py -> run_cycle()
+        # 2. Skip if already holding this pair
         try:
             existing = get_open_position(pair)
         except Exception as e:
-            print(
-                f"  [NETWORK ERROR] OANDA connection dropped: {e}. Retrying next cycle...")
-            return  # Safely abort this 15-min cycle without crashing the daemon script
+            print(f"  [NETWORK ERROR] OANDA connection failed: {e}")
+            print("  → Will retry next cycle.")
+            return
+
         if existing:
-            lu = float(existing.get("long", {}).get("units", 0))
-            su = float(existing.get("short", {}).get("units", 0))
-            if lu != 0 or su != 0:
-                print(f"[CYCLE] Already holding {pair}. Skipping new entry.")
+            long_units = float(existing.get("long", {}).get("units", 0))
+            short_units = float(existing.get("short", {}).get("units", 0))
+            if long_units != 0 or short_units != 0:
+                print(f"[CYCLE] Already holding position in {pair}. Skipping.")
                 return
 
-        # 3. Build TradeSignal and execute
+        # 3. Build & execute trade signal
         signal = TradeSignal(
             pair_to_trade=pair,
             action=action,
-            confidence_score=0.85,   # rule-based, high confidence
+            confidence_score=0.85,  # High confidence rule-based
             stop_loss=signal_data["stop_loss"],
             take_profit=signal_data["take_profit"],
             reasoning=signal_data["reasoning"]
         )
 
-        print(f"\n  SIGNAL    : {action} {pair}")
-        print(f"  ENTRY     : {signal_data['entry']}")
-        print(f"  SL        : {signal.stop_loss}")
-        print(f"  TP        : {signal.take_profit}")
-        print(f"  REASONING : {signal.reasoning}")
-        print("\n[CYCLE] Executing order...")
+        print(f"\n  ✅ SIGNAL: {action} {pair}")
+        print(f"     Entry      : {signal_data['entry']}")
+        print(f"     Stop Loss  : {signal.stop_loss}")
+        print(f"     Take Profit: {signal.take_profit}")
+        print(f"     R:R Ratio  : {signal_data['risk_reward']:.2f}")
+        print(f"     Reason     : {signal.reasoning}")
+        print("\n  → Sending order to OANDA...")
 
         execute_market_trade(signal, units_override=profile["units"])
+        print("  ✅ Order submitted successfully")
 
     except Exception as e:
         import traceback
-        print(f"[CYCLE ERROR] {e}")
+        print(f"[CYCLE FAILED] {str(e)}")
         traceback.print_exc()
+        print("  → Will retry on next scheduled run")
 
 
 if __name__ == "__main__":
-    print("=== JPY Trend Runner ===")
-    print("  Pairs    : USD/JPY, EUR/JPY, GBP/JPY")
-    print("  Signal   : H4+H1+M30+M15 all above MA5")
-    print("  SL       : Today's low − 23 pips")
-    print("  TP       : Entry + 100 pips")
-    print(
-        f"  Risk     : Level {RISK_LEVEL} ({RISK_PROFILE[RISK_LEVEL]['units']:,} units)")
-    print(f"  Interval : every {CHECK_INTERVAL_MINUTES} min")
-    print("  Press Ctrl+C to stop\n")
+    print("=" * 60)
+    print("JPY STRENGTH TRADING BOT — SCHEDULED RUNNER")
+    print("=" * 60)
+    print("  Strategy : Trade top pair if ≥2 valid JPY crosses qualify")
+    print(f"  Risk     : Level {RISK_LEVEL} ({RISK_PROFILE[RISK_LEVEL]['units']:,} units per trade)")
+    print(f"  Interval : Every {CHECK_INTERVAL_MINUTES} minutes")
+    print("  Press Ctrl+C to stop gracefully\n")
 
+    # Run first scan immediately
     run_cycle()
+
+    # Schedule recurring runs
     schedule.every(CHECK_INTERVAL_MINUTES).minutes.do(run_cycle)
+
+    # Keep running
     while True:
         schedule.run_pending()
         time.sleep(5)

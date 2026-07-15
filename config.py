@@ -16,7 +16,8 @@ OANDA_ACCOUNT_ID = os.getenv("OANDA_ACCOUNT_ID", "")
 # Scheduler
 # ==========================================
 CHECK_INTERVAL_MINUTES = 15   # 15 min matches the fastest signal timeframe (M15)
-
+REQUIRE_ALIGNED = 4
+MIN_VALID_PAIRS_TO_TRADE = 2   # must have ≥2 valid JPY crosses to trade the top one
 # ==========================================
 # ACTIVE STRATEGY SETTINGS
 # Simple MA5 multi-timeframe trend strategy on JPY pairs.
@@ -24,8 +25,8 @@ CHECK_INTERVAL_MINUTES = 15   # 15 min matches the fastest signal timeframe (M15
 
 # Pairs to actually trade (direct orders placed here)
 # TRADE_PAIRS = ["USD_JPY", "EUR_JPY", "GBP_JPY", "AUD_JPY", "USD_CHF", "EUR_CHF", "GBP_CHF", "AUD_CHF"]
-TRADE_PAIRS = ["USD_JPY", "EUR_JPY", "GBP_JPY", "AUD_JPY"]
-
+# TRADE_PAIRS = ["USD_JPY", "EUR_JPY", "GBP_JPY", "AUD_JPY"]
+TRADE_PAIRS = ["USD_JPY", "EUR_JPY", "GBP_JPY", "AUD_JPY", "NZD_JPY", "CAD_JPY"]
 # Timeframes that must ALL be above MA5 for an entry signal
 SIGNAL_TIMEFRAMES = ["H4", "H1", "M30", "M15"]
 
@@ -134,13 +135,14 @@ STRENGTH_TIMEFRAMES = {
 }
 STRENGTH_PAIRS = [
     "EUR_USD", "GBP_USD", "AUD_USD", "NZD_USD",
-    "USD_CAD", "USD_CHF", "USD_JPY",
-    "EUR_GBP", "EUR_JPY", "EUR_AUD", "EUR_CAD", "EUR_CHF",
+    "USD_CAD", "USD_JPY",
+    "EUR_GBP", "EUR_JPY", "EUR_AUD", "EUR_CAD",
     "GBP_JPY", "GBP_AUD", "GBP_CAD",
-    "AUD_JPY", "AUD_CAD", "AUD_CHF",
-    "NZD_JPY", "CAD_JPY", "CHF_JPY",
+    "AUD_JPY", "AUD_CAD", 
+    "NZD_JPY", "CAD_JPY"
 ]
-CURRENCIES = ["USD", "EUR", "GBP", "AUD", "NZD", "CAD", "CHF", "JPY"]
+
+CURRENCIES = ["USD", "EUR", "GBP", "AUD", "NZD", "CAD", "JPY"]
 
 # --- Blended fast/slow strength momentum -----------------------------------
 # STRENGTH_TIMEFRAMES (H1/H4/H8, weighted 1/3/6) are all LONGER than the
@@ -271,11 +273,8 @@ OANDA_ACCOUNT_ID = os.getenv("OANDA_ACCOUNT_ID")
 # Control where price/candle data comes from
 # ==========================================
 DATA_SOURCE = "OANDA_WITH_YAHOO_FALLBACK"
-ENABLE_ML_CONFIRMATION = True
-
-
 # --- ML Confirmation Layer (custom_strategy.py / ml_confirmation.py) ---
-ENABLE_ML_CONFIRMATION = True        # gate signals out on low ML confidence
+ENABLE_ML_CONFIRMATION = False        # gate signals out on low ML confidence
 ENABLE_ML_WEIGHTED_DOMINANCE = False  # scale dominance weight by ML confidence
 ML_MIN_CONFIDENCE = 0.55
 ML_RETRAIN_HOURS = 24
@@ -284,3 +283,12 @@ ML_TRAIN_CANDLE_COUNT = 3000
 ML_HOLDOUT_FRACTION = 0.2
 ML_LABEL_HORIZON = 3
 ML_MIN_HOLDOUT_F1 = 0.0
+
+# --- SIDEWAYS / RANGE DETECTION (TEST MODE) ---
+ENABLE_RANGE_DETECTOR = True       # Set to True to enable & compare
+RANGE_DETECT_LOOKBACK_DAYS = 5
+RANGE_DETECT_MAX_RANGE_PCT = 1.2
+RANGE_DETECT_MIN_VOL_RATIO = 0.8
+SKIP_SIDEWAYS_PAIRS = True  # False = ignore sideways check, trade all pairs regardless of range
+
+TRADE_TOP_PAIRS = 1  # Always trade only single strongest/weakest pair per cycle

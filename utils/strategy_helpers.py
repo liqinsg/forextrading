@@ -179,7 +179,7 @@ def format_strength_ranking(scores: Dict[str, float]) -> str:
         lines.append(f"  {i}. {currency}: {score:+.4f} {direction} {bar}")
     gap = ranked[0][1] - ranked[-1][1]
     lines.append(f"\n  Score gap: {gap:.3f} "
-                  f"({'STRONG' if gap > 1.5 else 'MODERATE' if gap > 0.5 else 'COILING'})")
+                 f"({'STRONG' if gap > 1.5 else 'MODERATE' if gap > 0.5 else 'COILING'})")
     return "\n".join(lines)
 
 
@@ -220,25 +220,50 @@ def get_trend_position(instrument: str, granularity: str) -> Optional[str]:
         return get_ema_trend_position(instrument, granularity)
     return get_ma5_position(instrument, granularity)
 
+def check_ma5_alignment(instrument: str, require_aligned: int = 4) -> Optional[str]:
+    """
+    Check MA5 alignment across H4, H1, M30, M15 timeframes.
+    Returns "BUY" if price above MA5 on enough timeframes,
+    Returns "SELL" if price below MA5 on enough timeframes,
+    Returns None if mixed.
+    
+    Args:
+        instrument: Currency pair to check
+        require_aligned: Minimum number of timeframes that must agree (3 or 4)
+    """
+    timeframes = ["H4", "H1", "M30", "M15"]
+    directions = []
 
-def check_ma5_alignment(instrument: str) -> Optional[str]:
-    positions = {}
-    method = "EMA10/EMA20" if ENABLE_EMA_TREND else "MA5"
+    for tf in timeframes:
+        try:
+            candles = get_candles(instrument, tf, count=10)
+            if len(candles) < 6:
+                print(f"    {tf}: Not enough data → skip")
+                return None
 
-    for tf in SIGNAL_TIMEFRAMES:
-        pos = get_trend_position(instrument, tf)
-        if pos is None:
-            print(f"    {tf}: DATA ERROR")
+            ma5 = _ema([float(c["mid"]["c"]) for c in candles], period=5)
+            current_price = float(candles[-1]["mid"]["c"])
+
+            if current_price > ma5:
+                directions.append("BUY")
+                print(f"    {tf}: ABOVE MA5")
+            else:
+                directions.append("SELL")
+                print(f"    {tf}: BELOW MA5")
+        except Exception as e:
+            print(f"    {tf}: Check failed: {e} → skip")
             return None
-        positions[tf] = pos
-        print(f"    {tf}: {pos.upper()} {method}")
 
-    distinct_positions = set(positions.values())
-    if len(distinct_positions) == 1:
-        current_alignment = distinct_positions.pop()
-        return "BUY" if current_alignment == "above" else "SELL"
+    buy_count = directions.count("BUY")
+    sell_count = directions.count("SELL")
 
-    return None
+    if buy_count >= require_aligned:
+        return "BUY"
+    elif sell_count >= require_aligned:
+        return "SELL"
+    else:
+        print(f"    → Mixed alignment: {buy_count}x BUY, {sell_count}x SELL (need ≥{require_aligned} same)")
+        return None
 
 
 def get_previous_day_low(instrument: str) -> Optional[float]:
@@ -266,6 +291,7 @@ def confirmed_breakout(instrument: str, level: float, direction: str, closes_req
 
 
 def get_live_prices(instrument: str) -> Optional[Dict[str, float]]:
+    from utils import oanda_client
     try:
         pricing_module = __import__(
             "oandapyV20.endpoints.pricing", fromlist=["PricingInfo"]
@@ -284,10 +310,11 @@ def get_live_prices(instrument: str) -> Optional[Dict[str, float]]:
         print(f"    Price fetch failed for {instrument}: {e}")
         return None
 
-
 # ==========================================
 # NEWS FILTER CLASS
 # ==========================================
+
+
 class NewsFilter:
     IMPACT_THRESHOLD = 2
     LOOKAHEAD_HOURS = 24
@@ -315,8 +342,9 @@ class NewsFilter:
 
     def _get_client(self):
         if self._client is None:
-            api_key = os.getenv("GEMINI_API_KEY")
-            if not api_key:
+            if api_key := os.getenv("GEMINI_API_KEY"):
+                self._client = genai.Client(api_key=api_key)
+            else:
                 raise RuntimeError("GEMINI_API_KEY not found in environment (.env)")
             self._client = genai.Client(api_key=api_key)
         return self._client
@@ -485,6 +513,7 @@ class NewsFilter:
 
         return False, ""
 
+
 def get_dynamic_sl_tp(pair: str, entry: float, atr: float, sentiment: str) -> dict:
     prompt = f"""
     Suggest optimal SL/TP for {pair} entry={entry:.3f}, ATR={atr:.3f}.
@@ -495,4 +524,4 @@ def get_dynamic_sl_tp(pair: str, entry: float, atr: float, sentiment: str) -> di
         res = gemini_client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
         return json.loads(res.text.strip("`json \n"))
     except:
-        return {"sl": entry - 2*atr, "tp": entry + 4*atr, "rr": 2.0}
+        return {"sl": entry - 2 * atr, "tp": entry + 4 * atr, "rr": 2.0}

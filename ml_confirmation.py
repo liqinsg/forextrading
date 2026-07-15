@@ -1,4 +1,3 @@
-
 """
 ml_confirmation.py
 ===================
@@ -28,6 +27,14 @@ Design choices made to avoid the pitfalls found in forex_strategy.py:
   - Model is retrained on a TTL (default: once per day) and cached
     per-pair in memory, not on every 15-min cycle.
 
+Config flags/thresholds are read LIVE from config.py on every call (see
+_cfg() below), not frozen at import time. This matters because
+scheduled_runner.py is a long-lived process — editing config.py and
+flipping ENABLE_ML_CONFIRMATION to False takes effect on the very next
+cycle instead of requiring a process restart, matching how the rest of
+the switch-gated flags (NewsFilter, ENABLE_ATR_SLTP) are expected to
+behave.
+
 NOT yet wired into custom_strategy.py or scheduled_runner.py — this is
 a standalone draft. See the two call sites above for how to plug it in
 once you're happy with the holdout numbers it logs on first training.
@@ -49,18 +56,70 @@ from utils.strategy_helpers import get_candles
 import config as _config
 
 # ----------------------
-# Config — add these to config.py; safe defaults if you don't
+# Config — add these to config.py; safe defaults if you don't.
+#
+# NOTE: these are only used as fallback DEFAULT values (e.g. in
+# run_backtest()/main(), which are one-shot CLI invocations where
+# live-reload doesn't matter). Anything read on the live/runtime path
+# (should_avoid_pair, get_confidence, _get_or_train) goes through
+# _cfg() below instead, so it always reflects the current config.py,
+# not whatever config.py looked like when this module was first
+# imported.
 # ----------------------
-ENABLE_ML_CONFIRMATION = getattr(_config, "ENABLE_ML_CONFIRMATION", False)
-ENABLE_ML_WEIGHTED_DOMINANCE = getattr(_config, "ENABLE_ML_WEIGHTED_DOMINANCE", False)
-ML_MIN_CONFIDENCE = getattr(_config, "ML_MIN_CONFIDENCE", 0.55)
-ML_RETRAIN_HOURS = getattr(_config, "ML_RETRAIN_HOURS", 24)
-ML_TRAIN_GRANULARITY = getattr(_config, "ML_TRAIN_GRANULARITY", "H1")
-ML_TRAIN_CANDLE_COUNT = getattr(_config, "ML_TRAIN_CANDLE_COUNT", 3000)
-ML_HOLDOUT_FRACTION = getattr(_config, "ML_HOLDOUT_FRACTION", 0.2)
-ML_LABEL_HORIZON = getattr(_config, "ML_LABEL_HORIZON", 3)  # bars ahead for future_return
-ML_MIN_HOLDOUT_F1 = getattr(_config, "ML_MIN_HOLDOUT_F1", 0.0)  # floor below which model is distrusted
-ML_BACKTEST_FEE_PCT = getattr(_config, "ML_BACKTEST_FEE_PCT", 0.0002)  # round-trip cost per position change, as a fraction (0.0002 = 2 pips on a ~1.0-quoted pair equivalent)
+def _cfg(name: str, default):
+    """Read a config value live from config.py on every call.
+
+    Using getattr(_config, name, default) here — instead of binding it
+    once to a module-level constant at import time — means a config.py
+    edit takes effect on the next call, not the next process restart.
+    That's the behavior the switch-gated pattern (NewsFilter,
+    ENABLE_ATR_SLTP, etc.) is supposed to have, and the bug this fixes:
+    ENABLE_ML_CONFIRMATION was previously frozen at import time, so a
+    long-lived scheduled_runner.py process kept gating trades on a
+    stale True even after config.py was edited to False.
+    """
+    return getattr(_config, name, default)
+
+
+# Static defaults (used by run_backtest()/main() — one-shot CLI calls,
+# and as the fallback value inside _cfg() calls elsewhere).
+ENABLE_ML_CONFIRMATION_DEFAULT = False
+ENABLE_ML_WEIGHTED_DOMINANCE_DEFAULT = False
+ML_MIN_CONFIDENCE_DEFAULT = 0.55
+ML_RETRAIN_HOURS_DEFAULT = 24
+ML_TRAIN_GRANULARITY_DEFAULT = "H1"
+ML_TRAIN_CANDLE_COUNT_DEFAULT = 3000
+ML_HOLDOUT_FRACTION_DEFAULT = 0.2
+ML_LABEL_HORIZON_DEFAULT = 3  # bars ahead for future_return
+ML_MIN_HOLDOUT_F1_DEFAULT = 0.0  # floor below which model is distrusted
+ML_BACKTEST_FEE_PCT_DEFAULT = 0.0002  # round-trip cost per position change, as a fraction (0.0002 = 2 pips on a ~1.0-quoted pair equivalent)
+
+# Values below are for run_backtest()/main() only (one-shot CLI script —
+# no long-lived process, so a static read at import time is fine there).
+ML_TRAIN_GRANULARITY = _cfg("ML_TRAIN_GRANULARITY", ML_TRAIN_GRANULARITY_DEFAULT)
+ML_TRAIN_CANDLE_COUNT = _cfg("ML_TRAIN_CANDLE_COUNT", ML_TRAIN_CANDLE_COUNT_DEFAULT)
+ML_HOLDOUT_FRACTION = _cfg("ML_HOLDOUT_FRACTION", ML_HOLDOUT_FRACTION_DEFAULT)
+ML_LABEL_HORIZON = _cfg("ML_LABEL_HORIZON", ML_LABEL_HORIZON_DEFAULT)
+ML_MIN_HOLDOUT_F1 = _cfg("ML_MIN_HOLDOUT_F1", ML_MIN_HOLDOUT_F1_DEFAULT)
+ML_MIN_CONFIDENCE = _cfg("ML_MIN_CONFIDENCE", ML_MIN_CONFIDENCE_DEFAULT)
+ML_BACKTEST_FEE_PCT = _cfg("ML_BACKTEST_FEE_PCT", ML_BACKTEST_FEE_PCT_DEFAULT)
+
+# Kept as a plain module-level name for backward compatibility with
+# `from ml_confirmation import ENABLE_ML_WEIGHTED_DOMINANCE` in
+# custom_strategy.py. NOTE: this one IS still frozen at import time,
+# same as before — it has the identical staleness risk that
+# ENABLE_ML_CONFIRMATION used to have. Prefer calling
+# is_ml_weighted_dominance_enabled() (below) from custom_strategy.py
+# instead of importing this constant directly, so a config.py edit
+# takes effect without restarting scheduled_runner.py.
+ENABLE_ML_WEIGHTED_DOMINANCE = _cfg("ENABLE_ML_WEIGHTED_DOMINANCE", ENABLE_ML_WEIGHTED_DOMINANCE_DEFAULT)
+
+
+def is_ml_weighted_dominance_enabled() -> bool:
+    """Live-read version of ENABLE_ML_WEIGHTED_DOMINANCE — call this
+    from custom_strategy.py instead of importing the module-level
+    constant, to avoid the stale-flag-until-restart bug."""
+    return _cfg("ENABLE_ML_WEIGHTED_DOMINANCE", ENABLE_ML_WEIGHTED_DOMINANCE_DEFAULT)
 
 
 class _PairModel:
@@ -72,13 +131,13 @@ class _PairModel:
         self.holdout_accuracy = None
         self.holdout_f1 = None
 
-    def is_stale(self) -> bool:
+    def is_stale(self, retrain_hours: float) -> bool:
         if self.pipeline is None or self.trained_at is None:
             return True
-        return datetime.now() - self.trained_at > timedelta(hours=ML_RETRAIN_HOURS)
+        return datetime.now() - self.trained_at > timedelta(hours=retrain_hours)
 
-    def is_trustworthy(self) -> bool:
-        return self.pipeline is not None and (self.holdout_f1 or 0.0) >= ML_MIN_HOLDOUT_F1
+    def is_trustworthy(self, min_holdout_f1: float) -> bool:
+        return self.pipeline is not None and (self.holdout_f1 or 0.0) >= min_holdout_f1
 
 
 def _candles_to_df(candles: list) -> pd.DataFrame:
@@ -144,14 +203,14 @@ def _build_labels(candles: pd.DataFrame, horizon: int) -> pd.Series:
     return (future_return > 0).astype(int)
 
 
-def _fit_pipeline(X: pd.DataFrame, y: pd.Series) -> tuple[Pipeline, float, float]:
+def _fit_pipeline(X: pd.DataFrame, y: pd.Series, holdout_fraction: float) -> tuple[Pipeline, float, float]:
     """
-    Fit on the first (1 - ML_HOLDOUT_FRACTION) of the series in time
+    Fit on the first (1 - holdout_fraction) of the series in time
     order, score on the held-out tail. This is a simple chronological
     holdout rather than in-sample scoring — the whole point is that
     holdout_accuracy/holdout_f1 reflect data the model never trained on.
     """
-    split_idx = int(len(X) * (1 - ML_HOLDOUT_FRACTION))
+    split_idx = int(len(X) * (1 - holdout_fraction))
     X_train, X_hold = X.iloc[:split_idx], X.iloc[split_idx:]
     y_train, y_hold = y.iloc[:split_idx], y.iloc[split_idx:]
 
@@ -177,41 +236,53 @@ class MLConfirmationFilter:
     ENABLE_ML_CONFIRMATION is False, so importing and calling this is
     safe even before you've validated the models — mirrors how
     NewsFilter behaves when ENABLE_NEWS_FILTER is off.
+
+    All config flags/thresholds used on this runtime path (enabled,
+    min confidence, retrain TTL, min holdout F1, granularity, candle
+    count, label horizon) are re-read from config.py via _cfg() on
+    every call — see _cfg()'s docstring for why.
     """
 
     def __init__(self):
         self._models: dict[str, _PairModel] = {}
 
     def _get_or_train(self, pair: str) -> _PairModel:
+        retrain_hours = _cfg("ML_RETRAIN_HOURS", ML_RETRAIN_HOURS_DEFAULT)
+        granularity = _cfg("ML_TRAIN_GRANULARITY", ML_TRAIN_GRANULARITY_DEFAULT)
+        candle_count = _cfg("ML_TRAIN_CANDLE_COUNT", ML_TRAIN_CANDLE_COUNT_DEFAULT)
+        label_horizon = _cfg("ML_LABEL_HORIZON", ML_LABEL_HORIZON_DEFAULT)
+        holdout_fraction = _cfg("ML_HOLDOUT_FRACTION", ML_HOLDOUT_FRACTION_DEFAULT)
+        min_holdout_f1 = _cfg("ML_MIN_HOLDOUT_F1", ML_MIN_HOLDOUT_F1_DEFAULT)
+
         model = self._models.setdefault(pair, _PairModel())
-        if not model.is_stale():
+        if not model.is_stale(retrain_hours):
             return model
 
-        print(f"  [ML] Training/refreshing model for {pair} ({ML_TRAIN_GRANULARITY}, "
-              f"{ML_TRAIN_CANDLE_COUNT} candles)...")
+        print(f"  [ML] Training/refreshing model for {pair} ({granularity}, "
+              f"{candle_count} candles)...")
         try:
-            raw = get_candles(pair, granularity=ML_TRAIN_GRANULARITY, count=ML_TRAIN_CANDLE_COUNT)
+            raw = get_candles(pair, granularity=granularity, count=candle_count)
             candles = _candles_to_df(raw) if raw is not None else None
             if candles is None or len(candles) < 200:
                 print(f"  [ML] {pair}: insufficient candle history, skipping training.")
                 return model
 
             X = _build_features(candles)
-            y = _build_labels(candles, ML_LABEL_HORIZON)
+            y = _build_labels(candles, label_horizon)
             data = pd.concat([X, y.rename("label")], axis=1).dropna()
             if len(data) < 100:
                 print(f"  [ML] {pair}: insufficient rows after feature/label cleanup.")
                 return model
 
             Xc, yc = data.drop(columns=["label"]), data["label"]
-            pipeline, acc, f1 = _fit_pipeline(Xc, yc)
+            pipeline, acc, f1 = _fit_pipeline(Xc, yc, holdout_fraction)
 
             model.pipeline = pipeline
             model.trained_at = datetime.now()
             model.holdout_accuracy = acc
             model.holdout_f1 = f1
 
-            trust_flag = "" if model.is_trustworthy() else "  ⚠️ below ML_MIN_HOLDOUT_F1, treating as neutral"
+            trust_flag = "" if model.is_trustworthy(min_holdout_f1) else "  ⚠️ below ML_MIN_HOLDOUT_F1, treating as neutral"
             print(f"  [ML] {pair}: retrained. Holdout acc={acc:.2%} f1={f1:.2f}{trust_flag}")
         except Exception as e:
             print(f"  [ML] {pair}: training failed — {e}")
@@ -226,15 +297,18 @@ class MLConfirmationFilter:
         untrained, below the holdout F1 floor, or on any failure —
         never raises, so a broken model can't take down a live cycle.
         """
-        if not ENABLE_ML_CONFIRMATION:
+        if not _cfg("ENABLE_ML_CONFIRMATION", ENABLE_ML_CONFIRMATION_DEFAULT):
             return 0.5
 
+        min_holdout_f1 = _cfg("ML_MIN_HOLDOUT_F1", ML_MIN_HOLDOUT_F1_DEFAULT)
+        granularity = _cfg("ML_TRAIN_GRANULARITY", ML_TRAIN_GRANULARITY_DEFAULT)
+
         model = self._get_or_train(pair)
-        if model.pipeline is None or not model.is_trustworthy():
+        if model.pipeline is None or not model.is_trustworthy(min_holdout_f1):
             return 0.5
 
         try:
-            raw = get_candles(pair, granularity=ML_TRAIN_GRANULARITY, count=100)
+            raw = get_candles(pair, granularity=granularity, count=100)
             candles = _candles_to_df(raw) if raw is not None else pd.DataFrame()
             X = _build_features(candles).dropna()
             if X.empty:
@@ -251,12 +325,13 @@ class MLConfirmationFilter:
         Gate a signal out if ML confidence is below ML_MIN_CONFIDENCE.
         Always returns (False, "") when ENABLE_ML_CONFIRMATION is off.
         """
-        if not ENABLE_ML_CONFIRMATION:
+        if not _cfg("ENABLE_ML_CONFIRMATION", ENABLE_ML_CONFIRMATION_DEFAULT):
             return False, ""
 
+        min_confidence = _cfg("ML_MIN_CONFIDENCE", ML_MIN_CONFIDENCE_DEFAULT)
         conf = self.get_confidence(pair, direction)
-        if conf < ML_MIN_CONFIDENCE:
-            return True, f"ML confidence {conf:.2f} < {ML_MIN_CONFIDENCE}"
+        if conf < min_confidence:
+            return True, f"ML confidence {conf:.2f} < {min_confidence}"
         return False, ""
 
 
@@ -291,7 +366,7 @@ def run_backtest(pair: str) -> dict:
         return {"pair": pair, "status": "insufficient_rows"}
 
     Xc, yc = data.drop(columns=["label"]), data["label"]
-    pipeline, acc, f1 = _fit_pipeline(Xc, yc)
+    pipeline, acc, f1 = _fit_pipeline(Xc, yc, ML_HOLDOUT_FRACTION)
 
     split_idx = int(len(Xc) * (1 - ML_HOLDOUT_FRACTION))
     X_hold = Xc.iloc[split_idx:]
